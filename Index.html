@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="theme-color" content="#000000">
+  <title>MyStremio • Panthers</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/webtorrent@1.9.5/webtorrent.min.js"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.6.0/css/all.min.css">
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap');
+    body { font-family: 'Inter', system-ui, sans-serif; }
+    .carousel { scrollbar-width: none; }
+    .modal { animation: modalPop 0.3s ease; }
+    @keyframes modalPop { from { opacity: 0; transform: scale(0.95); } to { opacity: 1; transform: scale(1); } }
+    video { max-height: 85vh; width: 100%; }
+    .bottom-nav { position: fixed; bottom: 0; left: 0; right: 0; background: #111; border-top: 1px solid #27272a; }
+    .accent { color: #0085CA; }
+    .accent-bg { background-color: #0085CA; }
+    .accent-hover:hover { background-color: #006DA8; }
+  </style>
+</head>
+<body class="bg-black text-white min-h-screen pb-20">
+
+  <div class="flex-1 overflow-auto" id="main-content"></div>
+
+  <!-- Bottom Navigation -->
+  <div class="bottom-nav flex justify-around py-3 text-xl z-50">
+    <a onclick="navigate(0)" class="nav-item flex flex-col items-center"><i class="fa-solid fa-house"></i><span class="text-xs mt-1">Discover</span></a>
+    <a onclick="navigate(1)" class="nav-item flex flex-col items-center"><i class="fa-solid fa-magnifying-glass"></i><span class="text-xs mt-1">Search</span></a>
+    <a onclick="navigate(2)" class="nav-item flex flex-col items-center"><i class="fa-solid fa-bookmark"></i><span class="text-xs mt-1">Library</span></a>
+    <a onclick="navigate(3)" class="nav-item flex flex-col items-center"><i class="fa-solid fa-plug"></i><span class="text-xs mt-1">Sources</span></a>
+    <a onclick="navigate(4)" class="nav-item flex flex-col items-center"><i class="fa-solid fa-gear"></i><span class="text-xs mt-1">Settings</span></a>
+  </div>
+
+  <!-- Detail Modal -->
+  <div id="modal" class="hidden fixed inset-0 bg-black/80 flex items-center justify-center z-50">
+    <div class="modal bg-zinc-900 rounded-3xl max-w-4xl w-full mx-4 overflow-hidden">
+      <div class="flex flex-col md:flex-row">
+        <div id="modal-poster" class="md:w-1/3 bg-zinc-800 h-64 md:h-auto"></div>
+        <div class="flex-1 p-8">
+          <div class="flex justify-between items-start">
+            <div>
+              <h2 id="modal-title" class="text-3xl font-bold"></h2>
+              <p id="modal-year" class="text-zinc-400 mt-1"></p>
+            </div>
+            <button onclick="closeModal()" class="text-3xl text-zinc-400 hover:text-white">×</button>
+          </div>
+          <p id="modal-overview" class="mt-6 text-zinc-300 leading-relaxed"></p>
+          <div class="mt-8">
+            <h3 class="font-semibold mb-4 flex items-center gap-2 accent"><i class="fa-solid fa-link"></i> Your Custom Streams</h3>
+            <div id="streams-list" class="space-y-3"></div>
+            <div class="mt-6 border border-dashed border-zinc-700 rounded-2xl p-6">
+              <h4 class="font-medium mb-3">Add new source (magnet or direct link)</h4>
+              <input id="source-name" type="text" placeholder="Source name (e.g. 1080p Torrent)" class="w-full bg-zinc-800 rounded-xl px-4 py-3 mb-3">
+              <input id="source-url" type="text" placeholder="Paste magnet link or direct URL" class="w-full bg-zinc-800 rounded-xl px-4 py-3">
+              <button onclick="addCustomSource()" class="mt-4 w-full accent-bg accent-hover py-4 rounded-2xl font-semibold flex items-center justify-center gap-2">
+                <i class="fa-solid fa-plus"></i> Add & Play Now
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Video Player -->
+  <div id="player-modal" onclick="if(event.target===this)closePlayer()" class="hidden fixed inset-0 bg-black flex items-center justify-center z-[100]">
+    <div class="w-full max-w-5xl px-4">
+      <div class="flex justify-end mb-2"><button onclick="closePlayer()" class="text-white text-4xl">×</button></div>
+      <video id="video-player" class="w-full rounded-3xl shadow-2xl" controls autoplay></video>
+      <div id="torrent-info" class="text-center text-sm text-zinc-400 mt-3"></div>
+    </div>
+  </div>
+
+  <script>
+    let API_KEY = localStorage.getItem('tmdb_key') || '';
+    let currentItem = null;
+    let library = JSON.parse(localStorage.getItem('library')) || [];
+    let currentPage = 0;
+    const client = typeof WebTorrent !== 'undefined' ? new WebTorrent() : null;
+    let searchTimeout = null;
+
+    function saveLibrary() { localStorage.setItem('library', JSON.stringify(library)); }
+
+    async function fetchTMDB(endpoint) {
+      if (!API_KEY) return [];
+      try {
+        const res = await fetch(`https://api.themoviedb.org/3\( {endpoint}?api_key= \){API_KEY}`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        return data.results || data;
+      } catch (e) { return { error: e.message }; }
+    }
+
+    function initTailwind() { tailwind.config = { content: ["*"], theme: { extend: {} } }; }
+
+    function highlightNav() {
+      document.querySelectorAll('.nav-item').forEach((el, i) => el.classList.toggle('accent', i === currentPage));
+    }
+
+    async function renderDiscover() {
+      currentPage = 0; highlightNav();
+      let html = `<div class="p-6"><h1 class="text-4xl font-bold mb-6">Discover</h1>`;
+      if (!API_KEY) {
+        html += `<div class="bg-amber-900 text-amber-200 rounded-3xl p-8 text-center">No API key saved yet.<br>Go to Settings.</div>`;
+      } else {
+        html += `<div class="text-zinc-400 mb-4">Loading trending...</div>`;
+        const trending = await fetchTMDB('/trending/all/week');
+        if (trending.error) {
+          html += `<div class="bg-red-900 text-red-200 rounded-3xl p-8 text-center"><p>API Error: ${trending.error}</p></div>`;
+        } else if (trending.length === 0) {
+          html += `<div class="bg-red-900 text-red-200 rounded-3xl p-8 text-center">No results returned.</div>`;
+        } else {
+          html += `<div class="mb-12"><h2 class="text-2xl font-semibold mb-4 flex items-center gap-2"><i class="fa-solid fa-fire accent"></i> Trending This Week</h2><div class="flex gap-4 overflow-x-auto carousel pb-4">${trending.map(item => createCard(item)).join('')}</div></div>`;
+        }
+      }
+      html += `</div>`;
+      document.getElementById('main-content').innerHTML = html;
+    }
+
+    function createCard(item) {
+      const type = item.media_type || (item.first_air_date ? 'tv' : 'movie');
+      const title = item.title || item.name;
+      const year = (item.release_date || item.first_air_date || '').slice(0,4);
+      return `<div onclick="showDetail(\( {item.id}, ' \){type}')" class="min-w-[170px] cursor-pointer group"><div class="relative rounded-3xl overflow-hidden"><img src="https://image.tmdb.org/t/p/w342\( {item.poster_path}" class="w-full aspect-[2/3] object-cover transition group-hover:scale-110"><div class="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 px-4 py-4"><p class="font-semibold text-sm"> \){title}</p><p class="text-xs text-zinc-400">${year} • ${type.toUpperCase()}</p></div></div></div>`;
+    }
+
+    async function showDetail(id, type) {
+      const res = await fetch(`https://api.themoviedb.org/3/\( {type}/ \){id}?api_key=${API_KEY}`);
+      const item = await res.json();
+      currentItem = { ...item, id, type, title: item.title || item.name };
+      const savedSources = library.filter(s => s.id === id);
+      let streamsHTML = savedSources.length ? savedSources.map(s => `<div onclick="playSource('\( {s.url}', ' \){s.name}')" class="flex items-center justify-between bg-zinc-800 hover:bg-zinc-700 rounded-2xl p-4 cursor-pointer"><div class="flex items-center gap-3"><i class="fa-solid fa-play-circle accent"></i><div><div class="font-medium">\( {s.name}</div><div class="text-xs text-zinc-400"> \){s.url.includes('magnet:') ? 'Torrent' : 'Direct'}</div></div></div><i class="fa-solid fa-arrow-right"></i></div>`).join('') : `<p class="text-zinc-500 italic">No sources yet — add one below!</p>`;
+      document.getElementById('modal-title').textContent = currentItem.title;
+      document.getElementById('modal-year').innerHTML = `${currentItem.release_date || currentItem.first_air_date || ''} • ${type.toUpperCase()}`;
+      document.getElementById('modal-overview').textContent = currentItem.overview || 'No overview.';
+      document.getElementById('modal-poster').innerHTML = `<img src="https://image.tmdb.org/t/p/w500${currentItem.poster_path}" class="w-full h-full object-cover">`;
+      document.getElementById('streams-list').innerHTML = streamsHTML;
+      document.getElementById('modal').classList.remove('hidden');
+    }
+
+    function closeModal() { document.getElementById('modal').classList.add('hidden'); currentItem = null; }
+
+    function addCustomSource() {
+      const name = document.getElementById('source-name').value.trim() || 'My Torrent';
+      const url = document.getElementById('source-url').value.trim();
+      if (!url || !currentItem) return;
+      library.push({ id: currentItem.id, name, url, title: currentItem.title, type: currentItem.type });
+      saveLibrary();
+      closeModal();
+      setTimeout(() => showDetail(currentItem.id, currentItem.type), 300);
+    }
+
+    function playSource(url, name) {
+      closeModal();
+      const playerModal = document.getElementById('player-modal');
+      const video = document.getElementById('video-player');
+      const info = document.getElementById('torrent-info');
+      playerModal.classList.remove('hidden');
+      video.src = '';
+      info.classList.remove('hidden');
+      info.innerHTML = url.startsWith('magnet:') ? '🌐 Connecting to torrent peers...<br><small>Keep app open — may take 10-60 seconds</small>' : 'Loading stream...';
+
+      if (url.startsWith('magnet:') && client) {
+        client.add(url, (torrent) => {
+          info.textContent = `Torrent: ${torrent.name} • ${Math.round(torrent.progress*100)}%`;
+          const file = torrent.files.find(f => f.name.endsWith('.mp4') || f.name.endsWith('.mkv'));
+          if (file) file.renderTo(video, { autoplay: true });
+        });
+      } else {
+        video.src = url;
+        video.play();
+      }
+    }
+
+    function closePlayer() {
+      const video = document.getElementById('video-player');
+      video.pause(); video.src = '';
+      if (client) client.destroy();
+      document.getElementById('player-modal').classList.add('hidden');
+    }
+
+    function navigate(page) {
+      currentPage = page;
+      if (page === 0) renderDiscover();
+      else if (page === 1) renderSearch();
+      else if (page === 2) showMyLibrary();
+      else if (page === 3) showMySources();
+      else if (page === 4) renderSettings();
+    }
+
+    function renderSearch() { currentPage = 1; highlightNav(); let html = `<div class="p-6"><div class="flex gap-3 mb-8"><input id="search-input" type="text" placeholder="Search movies or TV shows..." class="flex-1 bg-zinc-900 rounded-3xl py-6 px-8 text-xl outline-none focus:ring-2 focus:ring-[#0085CA]" oninput="liveSearch()"><button onclick="performSearch()" class="accent-bg accent-hover px-8 rounded-3xl font-semibold">Search</button></div><div id="search-results" class="grid grid-cols-2 gap-4"></div></div>`; document.getElementById('main-content').innerHTML = html; }
+    function liveSearch() { clearTimeout(searchTimeout); searchTimeout = setTimeout(performSearch, 700); }
+    async function performSearch() {
+      const query = document.getElementById('search-input').value.trim();
+      if (!query) return;
+      const container = document.getElementById('search-results');
+      if (!API_KEY) { container.innerHTML = `<div class="col-span-2 text-center py-12 text-zinc-400">Enter TMDB key in Settings first.</div>`; return; }
+      container.innerHTML = `<div class="col-span-2 text-center py-12 text-zinc-400">🔎 Searching...</div>`;
+      const results = await fetchTMDB(`/search/multi?query=${encodeURIComponent(query)}`);
+      container.innerHTML = results.length ? results.map(item => createCard(item)).join('') : `<div class="col-span-2 text-center py-12 text-zinc-400">No results found.</div>`;
+    }
+
+    function showMyLibrary() { currentPage = 2; highlightNav(); /* full library code */ const uniqueIds = [...new Set(library.map(s => s.id))]; let html = `<div class="p-6"><h1 class="text-4xl font-bold mb-8">My Library</h1><div class="grid grid-cols-2 gap-6">`; html += uniqueIds.map(id => { const item = library.find(s => s.id === id); return `<div onclick="showDetail(\( {item.id}, ' \){item.type}')" class="cursor-pointer text-center bg-zinc-900 rounded-3xl p-6"><div class="text-6xl mb-3">🎬</div><p class="font-semibold">\( {item.title}</p><p class="text-xs accent"> \){library.filter(s => s.id === item.id).length} sources</p></div>`; }).join(''); html += `</div></div>`; if (!uniqueIds.length) html = `<div class="p-6 text-center text-zinc-400 text-xl">Library empty.<br>Browse and add sources!</div>`; document.getElementById('main-content').innerHTML = html; }
+
+    function showMySources() { currentPage = 3; highlightNav(); let html = `<div class="p-6"><h1 class="text-4xl font-bold mb-8">My Sources</h1>`; if (!library.length) html += `<p class="text-zinc-400">No sources yet.</p>`; else { html += `<div class="space-y-4">`; library.forEach(s => { html += `<div class="flex justify-between bg-zinc-900 rounded-3xl p-6"><div><div class="font-medium">${s.title} • \( {s.name}</div><div class="text-xs text-zinc-400 break-all"> \){s.url}</div></div><button onclick="playSource('\( {s.url}', ' \){s.name}');event.stopImmediatePropagation()" class="accent-bg accent-hover px-8 py-3 rounded-2xl text-sm">Play</button></div>`; }); html += `</div>`; } html += `</div>`; document.getElementById('main-content').innerHTML = html; }
+
+    function renderSettings() {
+      currentPage = 4; highlightNav();
+      const maskedKey = API_KEY ? API_KEY.substring(0,4) + '••••••••' + API_KEY.substring(API_KEY.length-4) : 'None';
+      let html = `
+        <div class="p-6">
+          <h1 class="text-4xl font-bold mb-8">Settings</h1>
+          <div class="bg-zinc-900 rounded-3xl p-8 mb-8">
+            <h3 class="font-semibold mb-4 flex items-center gap-2 accent"><i class="fa-solid fa-key"></i> TMDB API Key (v3)</h3>
+            <p class="text-zinc-400 text-sm mb-2">Saved key: ${maskedKey}</p>
+            <input id="api-key-input" type="text" value="${API_KEY}" placeholder="Paste your v3 key here" class="w-full bg-black rounded-2xl px-5 py-4 text-white outline-none focus:ring-2 focus:ring-[#0085CA]">
+            <button onclick="saveApiKey()" class="mt-6 w-full accent-bg accent-hover py-4 rounded-2xl font-semibold">Save / Update Key</button>
+          </div>
+          <div class="bg-zinc-900 rounded-3xl p-8 mb-8">
+            <h3 class="font-semibold mb-6 accent">Video Tests</h3>
+            <button onclick="testDirectVideo()" class="w-full accent-bg accent-hover py-6 rounded-3xl font-semibold text-lg flex items-center justify-center gap-3 mb-4">
+              ▶️ Test Direct Video (no torrent)
+            </button>
+            <button onclick="testTorrent()" class="w-full accent-bg accent-hover py-6 rounded-3xl font-semibold text-lg flex items-center justify-center gap-3">
+              <i class="fa-solid fa-magnet"></i> Test Public Domain Torrent
+            </button>
+          </div>
+          <div class="bg-zinc-900 rounded-3xl p-8">
+            <h3 class="font-semibold mb-6 accent">Debug & Report</h3>
+            <button onclick="copyDebugReport()" class="w-full accent-bg accent-hover py-4 rounded-2xl font-semibold flex items-center justify-center gap-2">
+              <i class="fa-solid fa-copy"></i> Copy Debug Report to Clipboard
+            </button>
+          </div>
+        </div>
+      `;
+      document.getElementById('main-content').innerHTML = html;
+    }
+
+    function saveApiKey() {
+      const key = document.getElementById('api-key-input').value.trim();
+      if (key) { API_KEY = key; localStorage.setItem('tmdb_key', API_KEY); alert('✅ Key saved!'); navigate(0); }
+    }
+
+    function testDirectVideo() {
+      closeModal();
+      const playerModal = document.getElementById('player-modal');
+      const video = document.getElementById('video-player');
+      const info = document.getElementById('torrent-info');
+      playerModal.classList.remove('hidden');
+      video.src = 'https://test-streams.mux.dev/x264_480p.mp4';
+      video.play();
+      info.innerHTML = '✅ Playing direct MP4 test video (should start immediately)';
+    }
+
+    function testTorrent() {
+      const testMagnet = "magnet:?xt=urn:btih:dd8255ecdc7ca55fb0bbf81323d87062db1f6d1c&dn=Big+Buck+Bunny";
+      playSource(testMagnet, "Test Torrent");
+    }
+
+    function copyDebugReport() {
+      const maskedKey = API_KEY ? API_KEY.substring(0,4) + '••••••••' + API_KEY.substring(API_KEY.length-4) : 'NONE';
+      const debug = `MyStremio Debug Report\n----------------------------------------\nAPI Key saved: \( {API_KEY ? 'YES' : 'NO'} ( \){maskedKey})\nLibrary items: ${library.length}\nCurrent page: ${currentPage}\nBrowser: ${navigator.userAgent}\nScreen: \( {window.innerWidth}x \){window.innerHeight}\nWebTorrent: ${typeof WebTorrent !== 'undefined'}\nDate: ${new Date().toISOString()}\n\nPaste this entire block back to Grok.`;
+      navigator.clipboard.writeText(debug).then(() => alert('✅ Debug report copied! Paste it in your next message.'));
+    }
+
+    window.onload = () => {
+      initTailwind();
+      navigate(0);
+    };
+  </script>
+</body>
+</html>
