@@ -34,7 +34,6 @@
     <a onclick="navigate(4)" class="nav-item flex flex-col items-center"><i class="fa-solid fa-gear"></i><span class="text-xs mt-1">Settings</span></a>
   </div>
 
-  <!-- Detail Modal and Player (full) -->
   <div id="modal" class="hidden fixed inset-0 bg-black/80 flex items-center justify-center z-50">
     <div class="modal bg-zinc-900 rounded-3xl max-w-4xl w-full mx-4 overflow-hidden">
       <div class="flex flex-col md:flex-row">
@@ -68,7 +67,7 @@
   <div id="player-modal" onclick="if(event.target===this)closePlayer()" class="hidden fixed inset-0 bg-black flex items-center justify-center z-[100]">
     <div class="w-full max-w-5xl px-4">
       <div class="flex justify-end mb-2"><button onclick="closePlayer()" class="text-white text-4xl">×</button></div>
-      <video id="video-player" class="w-full rounded-3xl shadow-2xl" controls autoplay></video>
+      <video id="video-player" class="w-full rounded-3xl shadow-2xl" controls autoplay playsinline muted></video>
       <div id="torrent-info" class="text-center text-sm text-zinc-400 mt-3"></div>
     </div>
   </div>
@@ -79,7 +78,6 @@
     let library = JSON.parse(localStorage.getItem('library')) || [];
     let currentPage = 0;
     const client = typeof WebTorrent !== 'undefined' ? new WebTorrent() : null;
-    let searchTimeout = null;
 
     function saveLibrary() { localStorage.setItem('library', JSON.stringify(library)); }
 
@@ -170,7 +168,7 @@
         });
       } else {
         video.src = url;
-        video.play();
+        video.play().catch(e => console.log(e));
       }
     }
 
@@ -248,8 +246,8 @@
       const video = document.getElementById('video-player');
       const info = document.getElementById('torrent-info');
       playerModal.classList.remove('hidden');
-      video.src = 'https://test-streams.mux.dev/x264_480p.mp4';
-      video.play();
+      video.src = 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny_320x180_10s_1MB.mp4';
+      video.play().catch(e => console.log(e));
       info.innerHTML = '✅ Playing direct MP4 test video';
     }
 
@@ -261,23 +259,14 @@
     function copyDebugReport() {
       const hasKey = API_KEY ? 'YES' : 'NO';
       const maskedKey = API_KEY ? API_KEY.substring(0,4) + '••••••••' + API_KEY.substring(API_KEY.length-4) : 'None';
-      const debugText = `MyStremio Debug Report
-----------------------------------------
-API Key saved: \( {hasKey} ( \){maskedKey})
-Library items: ${library.length}
-Current page: ${currentPage}
-Browser: ${navigator.userAgent}
-Screen: \( {window.innerWidth}x \){window.innerHeight}
-WebTorrent: ${typeof WebTorrent !== 'undefined'}
-Date: ${new Date().toISOString()}
-
-Paste this entire block back to Grok.`;
+      const debugText = `MyStremio Debug Report\n----------------------------------------\nAPI Key saved: \( {hasKey} ( \){maskedKey})\nLibrary items: ${library.length}\nCurrent page: ${currentPage}\nBrowser: ${navigator.userAgent}\nScreen: \( {window.innerWidth}x \){window.innerHeight}\nWebTorrent: ${typeof WebTorrent !== 'undefined'}\nDate: ${new Date().toISOString()}\n\nPaste this entire block back to Grok.`;
       navigator.clipboard.writeText(debugText).then(() => alert('✅ Debug report copied! Paste it in your next message to Grok.'));
     }
 
     window.onload = () => {
       initTailwind();
       navigate(0);
+      console.log('✅ App loaded successfully');
     };
   </script>
 </body>
